@@ -1,0 +1,118 @@
+﻿title: 改善C++程序与设计 「2」 构造析构赋值
+date: 2015-11-26 11:50:05
+tags: 
+- C++ 
+- 读书笔记
+- Effective C++
+---
+## C++默默编写并调用的函数
+所有这些函数都是public且inline的:
+
+- default构造函数
+ - 声明构造函数之后, 编译器不再创建default构造函数
+- copy构造函数
+ - 编译器创建的版本会将来源对象的每一个non-static成员变量拷贝到目标对象
+- copy assignment操作符
+ - 编译器创建的版本会将来源对象的每一个non-static成员变量拷贝到目标对象
+ - 如果class内有reference或const成员变量, 编译器将拒绝编译默认的copy assignment操作符
+ - 如果某个base classes将copy assignment操作符声明为private, 编译器将拒绝为其derived classes生成一个copy assignment操作符
+- 析构函数
+ - 编译器产出的析构函数是non-virtual, 除非这个class的base class自身声明有virtual析构函数
+
+## 可明确拒绝编译器自动生成的函数
+如果不想让编译器自动生成copy构造函数或copy assignment操作符等, 可以将其声明为private而且故意不实现它们, 这样在链接的时候就会报错.
+```C++
+class Foo {
+public:
+    ...
+private:
+    Foo(const Foo&);                //只有声明
+    Foo& operator=(const Foo&);
+};
+```
+通过继承一个专门为了阻止copying动作而设计的base class, 可以将链接期的错误移至编译期.
+```c++
+class Uncopyable {
+protected:
+    Uncopyable() {}                         //允许构造和析构
+    ~Uncopyable() {}
+private:
+    Uncopyable(const Uncopyable&);          //阻止copying
+    Uncopyable& operator=(const Uncopyable&);
+};
+
+class Foo: private Uncopyable {
+    ...
+};
+```
+Boost提供了名为`noncopyable`的class
+
+## 为多态基类声明virtual析构函数
+- 在经由一个base class指针, 去删除derived class对象的时候, 如果base class内有non-virtual析构函数, 会导致不明确行为——通常会导致对象的derived成分没有被销毁.
+- 任何带有virtual函数的class都几乎确定应该有一个virtual析构函数.
+- 如果给不含virtual函数的class(不意图做一个base class)声明virtual析构函数, 会因virtual table的存在而消耗更多内存.
+- 不要继承一个标准容器或任何其他带有non-virtual析构函数的class.
+
+## 不要让析构函数吐出异常
+- 如果被析构函数调用的函数可能抛出异常, 捕捉它们, 然后吞下或结束程序.
+- 如果需要对异常做出反应, 不要在析构函数中执行, 要在普通函数中执行.
+
+## 不要在构造和析构函数中调用virtual函数
+这类调用从不下降至derived class. 
+> 在base class构造期间, virtual函数不是virtual函数
+
+## 令operator=返回一个reference to *this
+同样适用于+=, -=, *=等
+```c++
+class Foo {
+public:
+    Foo& operator=(int ths)
+    {
+        ...
+        return *this;
+    }
+}
+```
+## 自我赋值安全
+我们先给出Foo类的定义
+```
+class Bar { ... };
+class Foo {
+    ...
+private:
+    Bar* pb;
+};
+```
+### 证同测试
+```C++
+Foo& Foo::operator=(const Foo& rhs)
+{
+    if (this == &rhs) return *this;
+    delete pb;
+    pb = new Bar(*rhs.pb);
+    return *this;
+}
+```
+### 调整语句顺序
+```C++
+Foo& Foo::operator=(const Foo& rhs)
+{
+    Bar* pOrig = pb;
+    pb = new Bar(*rhs.pb);
+    delete pOrig;
+    return *this;
+}
+```
+### copy and swap
+```C++
+Foo& Foo::operator=(const Foo& rhs)
+{
+    Foo temp(rhs);
+    swap(temp);
+    return *this;
+}
+```
+## 复制对象的每一个成分
+- 复制所有local成员变量
+- 调用所有base classes内的适当的copying函数
+- 不可令copy assignment操作符调用copy构造函数, 反之亦然. 若有重复部分, 可放进第三个函数中去.
